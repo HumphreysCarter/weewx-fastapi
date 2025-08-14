@@ -3,6 +3,8 @@
 
 from weecfg.extension import ExtensionInstaller
 
+def loader():
+    return WeeWxApiInstaller()
 
 class WeeWxApiInstaller(ExtensionInstaller):
     def __init__(self):
