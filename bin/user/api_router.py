@@ -279,7 +279,15 @@ def data_router(config_dict: dict):
     )
     def get_var_units(obs_type: str):
         # Get the database unit system
-        units_system = config_dict.get('StdConvert', {}).get('target_unit', weewx.US)
+        units_system_key = config_dict.get('StdConvert', {}).get('target_unit', weewx.US)
+
+        units_map = {
+            'US': weewx.US,
+            'METRIC': weewx.METRIC,
+            'METRICWX': weewx.METRICWX
+        }
+
+        units_system = units_map.get(units_system_key, weewx.US)
 
         # Get the units for the obs type
         unit, unit_group = weewx.units.getStandardUnitType(units_system, obs_type)
