@@ -16,10 +16,17 @@ class DataAPI(StdService):
     def __init__(self, engine, config_dict):
         super().__init__(engine, config_dict)
 
+        # Check if the server is enabled in config
+        server_enabled = config_dict.get('DataAPI', {}).get('enable', 'True').upper() == 'TRUE'
+
         # Start the server thread
-        self._thread = ApiServerThread(config_dict)
-        self._thread.start()
-        log.info('DataAPI: API server thread started')
+        if server_enabled:
+            self._thread = ApiServerThread(config_dict)
+            self._thread.start()
+            log.info('DataAPI: API server thread started')
+        else:
+            self._thread = None
+            log.info('DataAPI: API server is disabled')
 
     def shutdown(self):
         if getattr(self, '_thread', None):
