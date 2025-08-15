@@ -36,7 +36,7 @@ A [WeeWX](https://weewx.com/) extension that provides a lightweight API interfac
 
 ## Usage
 
-The API server will run automatically whenever WeeWX is running. FastAPI will automatically produce interactive API documentation, which by default, it is available at:
+The API server will run automatically whenever WeeWX is running via Uvicorn. FastAPI will automatically produce interactive API documentation, which by default, it is available at:
 
 - Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
 - ReDoc: [http://localhost:8000/redoc](http://localhost:8000/redoc)
