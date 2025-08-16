@@ -171,6 +171,10 @@ class ApiServerThread(threading.Thread):
                     'description': ''
                 },
                 {
+                    'name': 'Records',
+                    'description': ''
+                },
+                {
                     'name': 'Normals',
                     'description': ''
                 },
