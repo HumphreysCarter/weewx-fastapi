@@ -10,13 +10,14 @@ A [WeeWX](https://weewx.com/) extension that provides a lightweight API interfac
 - Python **3.11** or later  
 - WeeWX **v4** or later  
 - FastAPI **0.116.0** or later
+- requests **2.32.0** or later
 
 
 ## Installation
 
-1. **Install FastAPI**
+1. **Install FastAPI and requests** packages
    ```bash
-   $ pip install "fastapi[standard]"
+   $ pip install "fastapi[standard]" requests
    ```
 
 2. **Install the extension** with `weectl extension`
@@ -43,11 +44,20 @@ The API server will run automatically whenever WeeWX is running via Uvicorn. Fas
 
 ## Configuration
 
-The host and port number where the server runs can be changed via the under the `[DataAPI]` section of the `weewx.conf` file. Additionally, the API server can be deactivated by setting `enabled` to False.
+The API server is configured via the `DataAPI` section of the `weewx.conf` file.
 
+### Default Configuration
 ```ini
 [DataAPI]
     enabled = True
     server_host = localhost
     server_port = 8000
+    prism_normals = False
 ```
+
+### Options
+* Use the `enabled` option to either enable or disable the API server.
+* The server host and port number can be set with the `server_host` and `server_port` settings. To enable all network interfaces, set `server_host` to `0.0.0.0`.
+* 30-year normals for precipitation and temperature can also be retrieved for your location from the [PRISM Group](https://prism.oregonstate.edu/normals/) at Oregon State University by setting `prism_normals` to `True`. *This is only available for areas within the continental United States*.
+
+

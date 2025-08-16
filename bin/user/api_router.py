@@ -1,12 +1,31 @@
 # Carter Humphreys
 # https://github.com/HumphreysCarter/weewx-fastapi
 
+import json
 import sqlite3
 import weewx.units
+from pathlib import Path
 from datetime import datetime
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
-weewx_db_path = None
+
+def load_prism_normals(path_to_json):
+    try:
+        with open(path_to_json, 'r') as file:
+            prism_daily_normals = json.load(file)
+    except FileNotFoundError:
+        return None, None
+
+    try:
+        # Get annual normals
+        annual_normals = prism_daily_normals['result']['annual_normals']
+
+        # Get daily normals
+        daily_normals = prism_daily_normals['result']['data']
+    except KeyError:
+        return None, None
+
+    return daily_normals, annual_normals
 
 
 def build_where_clause(ts_start=None, ts_end=None, start_inclusive=True, end_inclusive=True):
@@ -94,8 +113,8 @@ def data_router(config_dict: dict):
     router = APIRouter()
 
     # Find the weewx database path
-    weewx_config_path = config_dict.get('config_path')
-    weewx_db_path = weewx_config_path.replace('weewx.conf', '/archive/weewx.sdb')
+    weewx_config_path = Path(config_dict.get('config_path'))
+    weewx_db_path = weewx_config_path.parent / 'archive' / 'weewx.sdb'
 
     @router.get(
         '/station',
@@ -145,7 +164,7 @@ def data_router(config_dict: dict):
         return config_dict.get('Station', {}).get('station_type', '')
 
     @router.get(
-        '/archive/por',
+        '/database/por',
         summary = 'Period of record',
         description = 'Retrieves the period of record for the Database.',
         tags = ['Database'],
@@ -169,7 +188,7 @@ def data_router(config_dict: dict):
         return por
 
     @router.get(
-        '/archive/obs_types',
+        '/database/obs_types',
         summary = 'List observation types',
         description = 'Retrieves a list of all available observation types in the database.',
         tags = ['Database'],
@@ -184,20 +203,24 @@ def data_router(config_dict: dict):
         return db_var_list
 
     @router.get(
-        '/archive/{obs_type}/data',
+        '/database/{obs_type}/data',
         summary = 'Get data for observation type',
         description = 'Retrieves a list of all data associated with a given observation type from the database.',
         tags = ['Database'],
     )
-    def get_all_data(obs_type: str, start: int, end: int):
+    def get_all_data(obs_type: str, start: int = None, end: int = None):
 
-        # Get DateTime objects from input
-        start = datetime.strptime(str(start), '%Y%m%d%H%M')
-        end = datetime.strptime(str(end), '%Y%m%d%H%M')
+        if start is not None:
+            start = datetime.strptime(str(start), '%Y%m%d%H%M')
+            ts_start = int(start.timestamp())
+        else:
+            ts_start = None
 
-        # Convert to timestamps
-        ts_start = int(start.timestamp())
-        ts_end = int(end.timestamp())
+        if end is not None:
+            end = datetime.strptime(str(end), '%Y%m%d%H%M')
+            ts_end = int(end.timestamp())
+        else:
+            ts_end = None
 
         # Get the data
         data = get_db_data(weewx_db_path, obs_type, ts_start=ts_start, ts_end=ts_end)
@@ -205,7 +228,7 @@ def data_router(config_dict: dict):
         return data
 
     @router.get(
-        '/archive/{obs_type}/data/latest',
+        '/database/{obs_type}/data/latest',
         summary = 'Get latest observation for observation type',
         description = 'Retrieves the latest record in the database for a given observation type.',
         tags = ['Database'],
@@ -225,20 +248,24 @@ def data_router(config_dict: dict):
         return None
 
     @router.get(
-        '/archive/{obs_type}/data/aggregate',
+        '/database/{obs_type}/data/aggregate',
         summary = 'Aggregate data for observation type',
         description = 'Retrieves an aggregated list of data from the database for a given observation type.',
         tags = ['Database'],
     )
-    def get_aggregated_data(obs_type: str, start: int, end: int, function: str = 'avg', hours: int = 1):
+    def get_aggregated_data(obs_type: str, start: int = None, end: int = None, function: str = 'avg', hours: int = 1):
 
-        # Get DateTime objects from input
-        start = datetime.strptime(str(start), '%Y%m%d%H%M')
-        end = datetime.strptime(str(end), '%Y%m%d%H%M')
+        if start is not None:
+            start = datetime.strptime(str(start), '%Y%m%d%H%M')
+            ts_start = int(start.timestamp())
+        else:
+            ts_start = None
 
-        # Convert to timestamps
-        ts_start = int(start.timestamp())
-        ts_end = int(end.timestamp())
+        if end is not None:
+            end = datetime.strptime(str(end), '%Y%m%d%H%M')
+            ts_end = int(end.timestamp())
+        else:
+            ts_end = None
 
         # Get the data
         data = aggregate_db_data(weewx_db_path, obs_type, ts_start=ts_start, ts_end=ts_end, aggregate_func=function,
@@ -247,7 +274,7 @@ def data_router(config_dict: dict):
         return data
 
     @router.get(
-        '/archive/{obs_type}/data/stats',
+        '/database/{obs_type}/data/stats',
         summary = 'Observation type statistics',
         description = 'Retrieves the statistics for a given observation type.',
         tags = ['Database'],
@@ -272,7 +299,7 @@ def data_router(config_dict: dict):
         return data
 
     @router.get(
-        '/archive/{obs_type}/units',
+        '/database/{obs_type}/units',
         summary = 'Observation type units',
         description = 'Retrieves the units for a given observation type.',
         tags = ['Database'],
@@ -295,7 +322,7 @@ def data_router(config_dict: dict):
         return unit
 
     @router.get(
-        '/archive/{obs_type}/datatype',
+        '/database/{obs_type}/datatype',
         summary = 'Observation type data type',
         description = 'Retrieves the data type for a given observation type.',
         tags = ['Database'],
@@ -309,5 +336,96 @@ def data_router(config_dict: dict):
                 return var['type']
 
         return None
+
+    # Check if PRISM normals are enabled in config
+    normals_enabled = config_dict.get('DataAPI', {}).get('prism_normals', 'True').upper() == 'TRUE'
+    if normals_enabled:
+
+        # Load the PRISM normals
+        normals_path = weewx_config_path.parent / 'archive' / 'prism_daily_normals.json'
+        prism_daily_normals, prism_annual_normals = load_prism_normals(normals_path)
+
+        @router.get(
+            '/normals/prism',
+            summary = 'Get complete normals from PRISM',
+            description = 'Retrieves the all normals for total precipitation and max, min, and average temperature derived from PRISM.',
+            tags = ['Normals'],
+        )
+        def get_prism_normals():
+            if prism_annual_normals is None or prism_daily_normals is None:
+                return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
+
+            resp_dict = {
+                'annual_normals': {
+                    'precip_total': prism_annual_normals['ppt'],
+                    'max_temp': prism_annual_normals['tmax'],
+                    'min_temp': prism_annual_normals['tmin'],
+                    'temp_mean': prism_annual_normals['tmean']
+                },
+                'daily_normals': {
+                    'precip_total': prism_daily_normals['ppt'],
+                    'max_temp': prism_daily_normals['tmax'],
+                    'min_temp': prism_daily_normals['tmin'],
+                    'temp_mean': prism_daily_normals['tmean']
+                }
+            }
+            return resp_dict
+
+        @router.get(
+            '/normals/prism/annual',
+            summary = 'Get annual normals from PRISM',
+            description = 'Retrieves the annual normals for total precipitation and max, min, and average temperature derived from PRISM.',
+            tags = ['Normals'],
+        )
+        def get_prism_normals_annual():
+            if prism_annual_normals is None:
+                return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
+
+            resp_dict = {
+                'precip_total': prism_annual_normals['ppt'],
+                'max_temp': prism_annual_normals['tmax'],
+                'min_temp': prism_annual_normals['tmin'],
+                'temp_mean': prism_annual_normals['tmean']
+            }
+            return resp_dict
+
+        @router.get(
+            '/normals/prism/daily',
+            summary = 'Get the normals for a day from PRISM',
+            description = 'Retrieves the daily normals for total precipitation and max, min, and average temperature derived from PRISM for a given Julian day.',
+            tags = ['Normals'],
+        )
+        def get_prism_normals_daily(day: int = Query(..., ge=1, le=366, description='Julian Day')):
+            if prism_daily_normals is None:
+                return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
+
+            resp_dict = {
+                'precip_total': prism_daily_normals['ppt'][day],
+                'max_temp': prism_daily_normals['tmax'][day],
+                'min_temp': prism_daily_normals['tmin'][day],
+                'temp_mean': prism_daily_normals['tmean'][day]
+            }
+            return resp_dict
+
+        @router.get(
+            '/normals/prism/daily/today',
+            summary = 'Get the day normals for today from PRISM',
+            description = 'Retrieves the daily normals for total precipitation and max, min, and average temperature derived from PRISM for the currernt day.',
+            tags = ['Normals'],
+        )
+        def get_prism_normals_today():
+            if prism_daily_normals is None:
+                return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
+
+            today_dt = datetime.today()
+            today_julian = today_dt.timetuple().tm_yday
+            resp_dict = {
+                'precip_total': prism_daily_normals['ppt'][today_julian],
+                'max_temp': prism_daily_normals['tmax'][today_julian],
+                'min_temp': prism_daily_normals['tmin'][today_julian],
+                'temp_mean': prism_daily_normals['tmean'][today_julian]
+            }
+            return resp_dict
+
 
     return router

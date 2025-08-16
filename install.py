@@ -21,6 +21,7 @@ class WeeWxApiInstaller(ExtensionInstaller):
                     'enable': 'True',
                     'server_host': 'localhost',
                     'server_port': 8000,
+                    'prism_normals': 'False',
                 },
             },
             files=[
