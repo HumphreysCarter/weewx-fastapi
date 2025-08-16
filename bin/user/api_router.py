@@ -338,6 +338,10 @@ def data_router(config_dict: dict):
         # Load the PRISM normals
         prism_normals = load_prism_normals(normals_path)
 
+        # Create regex for month validation
+        VALID_MONTHS = 'January|February|March|April|May|June|July|August|September|October|November|December'
+        REGEX_PATTERN = rf'(?i)^({VALID_MONTHS})$'
+
         @router.get(
             '/normals/prism',
             summary = 'Get complete normals from PRISM',
@@ -366,7 +370,7 @@ def data_router(config_dict: dict):
             description='Retrieves the monthly normals for total precipitation and max, min, and average temperature derived from PRISM for a given month.',
             tags=['Normals'],
         )
-        def get_prism_normals_monthly(month: str = Query(..., description='Month')):
+        def get_prism_normals_monthly(month: str = Query(..., description='Month', pattern=REGEX_PATTERN)):
             if prism_normals is None:
                 return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
 
@@ -411,7 +415,9 @@ def data_router(config_dict: dict):
             description = 'Retrieves the daily normals for total precipitation and max, min, and average temperature derived from PRISM for a given month and day.',
             tags = ['Normals'],
         )
-        def get_prism_normals_daily(month: str = Query(..., description='Month'), day: int = Query(..., ge=1, le=30, description='Day of the Month')):
+        def get_prism_normals_daily(month: str = Query(..., description='Month', pattern=REGEX_PATTERN),
+                                    day: int = Query(..., ge=1, le=30, description='Day of the Month')
+                                    ):
             if prism_normals is None:
                 return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
 
