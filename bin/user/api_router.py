@@ -2,9 +2,11 @@
 # https://github.com/HumphreysCarter/weewx-fastapi
 
 import json
+import math
 import sqlite3
 import weewx.units
 from pathlib import Path
+from statistics import mean
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 
@@ -12,20 +14,11 @@ from fastapi import APIRouter, HTTPException, Query
 def load_prism_normals(path_to_json):
     try:
         with open(path_to_json, 'r') as file:
-            prism_daily_normals = json.load(file)
+            prism_normals = json.load(file)
     except FileNotFoundError:
-        return None, None
+        return None
 
-    try:
-        # Get annual normals
-        annual_normals = prism_daily_normals['result']['annual_normals']
-
-        # Get daily normals
-        daily_normals = prism_daily_normals['result']['data']
-    except KeyError:
-        return None, None
-
-    return daily_normals, annual_normals
+    return prism_normals
 
 
 def build_where_clause(ts_start=None, ts_end=None, start_inclusive=True, end_inclusive=True):
@@ -339,11 +332,11 @@ def data_router(config_dict: dict):
 
     # Check if PRISM normals are enabled in config
     normals_enabled = config_dict.get('DataAPI', {}).get('prism_normals', 'True').upper() == 'TRUE'
-    if normals_enabled:
+    normals_path = weewx_config_path.parent / 'archive' / 'prism_daily_normals.json'
+    if normals_enabled and normals_path.is_file():
 
         # Load the PRISM normals
-        normals_path = weewx_config_path.parent / 'archive' / 'prism_daily_normals.json'
-        prism_daily_normals, prism_annual_normals = load_prism_normals(normals_path)
+        prism_normals = load_prism_normals(normals_path)
 
         @router.get(
             '/normals/prism',
@@ -352,24 +345,9 @@ def data_router(config_dict: dict):
             tags = ['Normals'],
         )
         def get_prism_normals():
-            if prism_annual_normals is None or prism_daily_normals is None:
+            if prism_normals is None:
                 return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
-
-            resp_dict = {
-                'annual_normals': {
-                    'precip_total': prism_annual_normals['ppt'],
-                    'max_temp': prism_annual_normals['tmax'],
-                    'min_temp': prism_annual_normals['tmin'],
-                    'temp_mean': prism_annual_normals['tmean']
-                },
-                'daily_normals': {
-                    'precip_total': prism_daily_normals['ppt'],
-                    'max_temp': prism_daily_normals['tmax'],
-                    'min_temp': prism_daily_normals['tmin'],
-                    'temp_mean': prism_daily_normals['tmean']
-                }
-            }
-            return resp_dict
+            return prism_normals
 
         @router.get(
             '/normals/prism/annual',
@@ -378,54 +356,99 @@ def data_router(config_dict: dict):
             tags = ['Normals'],
         )
         def get_prism_normals_annual():
-            if prism_annual_normals is None:
+            if prism_normals is None:
+                return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
+            return prism_normals['annual_norms']
+
+        @router.get(
+            '/normals/prism/monthly',
+            summary='Get the normals for a month from PRISM',
+            description='Retrieves the monthly normals for total precipitation and max, min, and average temperature derived from PRISM for a given month.',
+            tags=['Normals'],
+        )
+        def get_prism_normals_monthly(month: str = Query(..., description='Month')):
+            if prism_normals is None:
                 return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
 
-            resp_dict = {
-                'precip_total': prism_annual_normals['ppt'],
-                'max_temp': prism_annual_normals['tmax'],
-                'min_temp': prism_annual_normals['tmin'],
-                'temp_mean': prism_annual_normals['tmean']
-            }
-            return resp_dict
+            try:
+                resp_dict = {
+                    'precip_total': math.fsum(prism_normals['daily_normals'][month.lower()]['precip_total'].values()),
+                    'temp_max': max(prism_normals['daily_normals'][month.lower()]['temp_max'].values()),
+                    'temp_avg': mean(prism_normals['daily_normals'][month.lower()]['temp_avg'].values()),
+                    'temp_min': min(prism_normals['daily_normals'][month.lower()]['temp_min'].values()),
+                }
+                return resp_dict
+            except KeyError:
+                return HTTPException(status_code=404, detail=f'No normals found for {month}.')
+
+        @router.get(
+            '/normals/prism/monthly/current',
+            summary='Get the normals for the current month from PRISM',
+            description='Retrieves the monthly normals for total precipitation and max, min, and average temperature derived from PRISM for the currernt month.',
+            tags=['Normals'],
+        )
+        def get_prism_normals_monthly_current():
+            if prism_normals is None:
+                return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
+
+            today_dt = datetime.today()
+            month = today_dt.strftime('%B')
+
+            try:
+                resp_dict = {
+                    'precip_total': math.fsum(prism_normals['daily_normals'][month.lower()]['precip_total'].values()),
+                    'temp_max': max(prism_normals['daily_normals'][month.lower()]['temp_max'].values()),
+                    'temp_avg': mean(prism_normals['daily_normals'][month.lower()]['temp_avg'].values()),
+                    'temp_min': min(prism_normals['daily_normals'][month.lower()]['temp_min'].values()),
+                }
+                return resp_dict
+            except KeyError:
+                return HTTPException(status_code=404, detail=f'No normals found for {month}.')
 
         @router.get(
             '/normals/prism/daily',
             summary = 'Get the normals for a day from PRISM',
-            description = 'Retrieves the daily normals for total precipitation and max, min, and average temperature derived from PRISM for a given Julian day.',
+            description = 'Retrieves the daily normals for total precipitation and max, min, and average temperature derived from PRISM for a given month and day.',
             tags = ['Normals'],
         )
-        def get_prism_normals_daily(day: int = Query(..., ge=1, le=366, description='Julian Day')):
-            if prism_daily_normals is None:
+        def get_prism_normals_daily(month: str = Query(..., description='Month'), day: int = Query(..., ge=1, le=30, description='Day of the Month')):
+            if prism_normals is None:
                 return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
 
-            resp_dict = {
-                'precip_total': prism_daily_normals['ppt'][day],
-                'max_temp': prism_daily_normals['tmax'][day],
-                'min_temp': prism_daily_normals['tmin'][day],
-                'temp_mean': prism_daily_normals['tmean'][day]
-            }
-            return resp_dict
+            try:
+                resp_dict = {
+                    'precip_total': prism_normals['daily_normals'][month.lower()]['precip_total'][str(day)],
+                    'temp_max': prism_normals['daily_normals'][month.lower()]['temp_max'][str(day)],
+                    'temp_avg': prism_normals['daily_normals'][month.lower()]['temp_avg'][str(day)],
+                    'temp_min': prism_normals['daily_normals'][month.lower()]['temp_min'][str(day)],
+                }
+                return resp_dict
+            except KeyError:
+                return HTTPException(status_code=404, detail=f'No normals found for {month} {day}.')
 
         @router.get(
             '/normals/prism/daily/today',
             summary = 'Get the day normals for today from PRISM',
-            description = 'Retrieves the daily normals for total precipitation and max, min, and average temperature derived from PRISM for the currernt day.',
+            description = 'Retrieves the daily normals for total precipitation and max, min, and average temperature derived from PRISM for the current day.',
             tags = ['Normals'],
         )
         def get_prism_normals_today():
-            if prism_daily_normals is None:
+            if prism_normals is None:
                 return HTTPException(status_code=500, detail='No PRISM normals could be found for your location.')
 
             today_dt = datetime.today()
-            today_julian = today_dt.timetuple().tm_yday
-            resp_dict = {
-                'precip_total': prism_daily_normals['ppt'][today_julian],
-                'max_temp': prism_daily_normals['tmax'][today_julian],
-                'min_temp': prism_daily_normals['tmin'][today_julian],
-                'temp_mean': prism_daily_normals['tmean'][today_julian]
-            }
-            return resp_dict
+            month = today_dt.strftime('%B')
+            day = str(today_dt.day)
 
+            try:
+                resp_dict = {
+                    'precip_total': prism_normals['daily_normals'][month.lower()]['precip_total'][day],
+                    'temp_max': prism_normals['daily_normals'][month.lower()]['temp_max'][day],
+                    'temp_avg': prism_normals['daily_normals'][month.lower()]['temp_avg'][day],
+                    'temp_min': prism_normals['daily_normals'][month.lower()]['temp_min'][day],
+                }
+                return resp_dict
+            except KeyError:
+                return HTTPException(status_code=404, detail=f'No normals found for {month} {day}.')
 
     return router

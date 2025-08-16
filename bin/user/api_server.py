@@ -2,18 +2,67 @@
 # https://github.com/HumphreysCarter/weewx-fastapi
 
 import json
+import math
 import logging
-import requests
 import uvicorn
+import calendar
+import requests
 import threading
 from pathlib import Path
 from weewx.engine import StdService
 from fastapi import FastAPI
+from statistics import mean
 
 from .api_router import data_router
 
 log = logging.getLogger(__name__)
 
+
+def prism_compute_annual_norms(daily_normals):
+    precip_total = math.fsum(daily_normals['ppt'])
+    max_temp = max(daily_normals['tmax'])
+    min_temp = min(daily_normals['tmin'])
+    mean_temp = mean(daily_normals['tmean'])
+
+    return {
+        'precip_total': precip_total,
+        'temp_max': max_temp,
+        'temp_avg': mean_temp,
+        'temp_min': min_temp
+    }
+
+def prism_process_daily_norms(daily_normals):
+    # Key rename mapping
+    key_map = {
+        'ppt': 'precip_total',
+        'tmax': 'temp_max',
+        'tmean': 'temp_avg',
+        'tmin': 'temp_min'
+    }
+
+    # Build julian_day -> (month, day)
+    jd_to_md = {}
+    day_counter = 1
+    for month in range(1, 13):
+        days_in_month = 29 if month == 2 else calendar.monthrange(2000, month)[1]
+        for day in range(1, days_in_month + 1):
+            jd_to_md[day_counter] = (month, day)
+            day_counter += 1
+
+    # Month names as outer keys
+    monthly_normals = {calendar.month_name[m].lower(): {} for m in range(1, 13)}
+
+    # Fill values
+    for key, values in daily_normals.items():
+        new_key = key_map.get(key, key)
+        for jd, value in enumerate(values, start=1):
+            month, day = jd_to_md[jd]
+            month_name = calendar.month_name[month].lower()
+            if new_key not in monthly_normals[month_name]:
+                monthly_normals[month_name][new_key] = {}
+            monthly_normals[month_name][new_key][day] = value
+
+    return monthly_normals
 
 def download_prism_normals(config_dict):
     weewx_config_path = Path(config_dict.get('config_path'))
@@ -49,10 +98,20 @@ def download_prism_normals(config_dict):
             resp = requests.post(prism_api_url, data=payload, headers=headers, timeout=30)
             resp.raise_for_status()
             try:
-                data = resp.json()
-                with open(normals_path, 'w') as f:
-                    json.dump(data, f, indent=4)
-                log.info('PRISM normals downloaded and saved to file')
+                prism_data = resp.json()
+                if 'result' in prism_data and 'data' in prism_data['result']:
+                    # Process data
+                    daily_dict = prism_process_daily_norms(prism_data['result']['data'])
+                    annual_dict = prism_compute_annual_norms(prism_data['result']['data'])
+
+                    # Create norms dict for JSON file
+                    norms_dict = {'annual_norms': annual_dict, 'daily_normals': daily_dict}
+                    with open(normals_path, 'w') as f:
+                        json.dump(norms_dict, f, indent=4)
+
+                    log.info('PRISM normals downloaded and saved to file')
+                else:
+                    log.warning(f'PRISM normals data parse failed: missing data: {resp.text}')
             except ValueError:
                 log.warning(f'PRISM normals download failed: invalid JSON: {resp.text}')
         except requests.HTTPError as e:
